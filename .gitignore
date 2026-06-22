@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+ENV/
+env/
+.env
+.venv
+poetry.lock
+pip-log.txt
+
+# Databases & local storage
+backend/database.db
+backend/app/storage/
+*.db
+*.sqlite3
+*.pkl
+
+# Node / React
+node_modules/
+dist/
+build/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/IDEs
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
