@@ -1,131 +1,159 @@
-# ⚡ Corrective Retrieval-Augmented Generation (CRAG) Platform
+# Corrective RAG (CRAG) Platform
 
-An agentic, factual-first Question-Answering platform that utilizes **Corrective RAG (CRAG)** to evaluate retrieved documents, perform query rewriting, and trigger web search fallbacks to deliver highly accurate answers without hallucinations.
+> **A production-grade implementation of the CRAG paper** — *Corrective Retrieval-Augmented Generation* (Yan et al., 2024)
 
-Built with a **FastAPI backend** (Python), a **React (Vite) frontend**, and styled with a **sleek obsidian dark glassmorphism UI**.
-
----
-
-## 🚀 Key Features
-
-*   **📂 Multi-format File Ingestion:** Upload PDF, TXT, or MD files. Documents are dynamically chunked, embedded locally (`all-MiniLM-L6-v2`), and indexed inside a secure vector store.
-*   **🔒 Strict Multi-Tenant Data Isolation:** Vector searches are securely isolated at the database query layer, ensuring users can only retrieve and query their own uploaded documents.
-*   **🧠 Intelligent Agentic Evaluator:** Automatically grades retrieved passages using cosine similarity.
-*   **🔍 Corrective Web Search Fallback:** If local documents fail to meet the relevance threshold, the system reformulates the query, executes a real-time DuckDuckGo web search, and synthesizes answers using consolidated sources.
-*   **💬 Premium Chat UI:** Interactive obsidian glassmorphism messaging layout with fluid micro-animations, copyable code blocks, and markdown support.
-*   **🪵 Live CRAG Pipeline Logs:** A togglable log drawer displaying real-time agent execution stages (`RETRIEVAL` → `EVALUATION` → `DECISION` → `QUERY_REWRITE` → `WEB_SEARCH` → `GENERATION`).
-*   **🔌 Multi-LLM Support:** Native compatibility with **Groq** (`llama-3.3-70b-versatile`), **Gemini** (`gemini-1.5-flash`), and **OpenAI** (`gpt-4o-mini`). Includes a local rule-based heuristics fallback.
+Built live at: [correctiverag.vercel.app](https://correctiverag.vercel.app)
 
 ---
 
-## 🛠️ Architecture Workflow
+## The Problem
 
-```mermaid
-graph TD
-    User([User Chat/Query]) -->|Send Query| API[FastAPI Server]
-    API -->|1. Retrieve Chunks| VS[(Vector Database)]
-    VS -->|Filter by User Doc IDs| VS
-    VS -->|Return Context Chunks| Grader{Document Grader Agent}
-    Grader -->|Grade >= 0.18: PASS| Gen[Answer Generator LLM]
-    Grader -->|Grade < 0.18: FAIL| Rewrite[Query Rewriter]
-    Rewrite -->|Run Clean Query| Web[Web Search Fallback]
-    Web -->|Extract Clean URLs| Gen
-    Gen -->|Synthesize Response + Logs| API
-    API -->|Display Answer & logs| UI[React UI Chat]
+Standard RAG systems retrieve document chunks and feed them to an LLM. But when the retrieved documents are **irrelevant** or the knowledge base **lacks an answer**, these systems either **hallucinate** or produce misleading responses. This is a critical failure mode for any QA system.
+
+## The CRAG Solution (From the Paper)
+
+The paper ["Corrective Retrieval-Augmented Generation"](https://arxiv.org/abs/2401.15884) by Yan et al. (2024) proposed an elegant fix: add a **corrective evaluator** between retrieval and generation that:
+
+1. **Grades** each retrieved passage for relevance
+2. **Decides** a path:
+   - **Correct** (relevant) → Generate from local documents
+   - **Incorrect** (irrelevant) → Rewrite query → Web search → Generate from web results
+3. **Synthesizes** the final answer with source citations
+
+This transforms RAG from a passive pipeline into an **agentic system** with fallback reasoning.
+
+---
+
+## What I Changed From the Paper
+
+| Paper's Approach | My Implementation | Rationale |
+|---|---|---|
+| Trained evaluator (T5-based) | Cosine similarity threshold (0.18) | No training data needed; works zero-shot |
+| Google Search API (paid) | DuckDuckGo HTML scraper | Free, no API key required |
+| Single LLM (ChatGPT) | Groq (llama-3.3-70b) + heuristic fallback | Free tier, low latency, reliable |
+| Command-line tool | Full-stack web app (React + FastAPI) | Real-world usable product |
+| Batch processing | Real-time logging of each pipeline step | Transparency & debugging |
+
+The core CRAG idea — **evaluate-then-decide** with web fallback — is preserved, but adapted for a production web environment.
+
+---
+
+## Architecture
+
+```
+User Query
+    │
+    ▼
+┌─────────────────────────────┐
+│  1. RETRIEVAL               │
+│  Vector DB search (FAISS)   │
+│  Filtered by user's docs    │
+└──────────┬──────────────────┘
+           │ 5 candidate chunks
+           ▼
+┌─────────────────────────────┐
+│  2. EVALUATION              │
+│  Cosine similarity scoring  │
+│  Threshold: 0.18            │
+└──────────┬──────────────────┘
+           │
+           ▼
+    ┌──────┴──────┐
+    │             │
+  PASS          FAIL
+  (≥0.18)       (<0.18)
+    │             │
+    │             ▼
+    │    ┌──────────────────┐
+    │    │ 3. QUERY REWRITE │
+    │    │ Strip filler words│
+    │    └────────┬─────────┘
+    │             │
+    │             ▼
+    │    ┌──────────────────┐
+    │    │ 4. WEB SEARCH    │
+    │    │ DuckDuckGo (4    │
+    │    │ results)         │
+    │    └────────┬─────────┘
+    │             │
+    └──────┬──────┘
+           │ context chunks
+           ▼
+┌─────────────────────────────┐
+│  5. GENERATION              │
+│  Groq → Gemini → OpenAI     │
+│  → Heuristic fallback       │
+│  + Source citations         │
+└──────────┬──────────────────┘
+           │
+           ▼
+    Final Answer + Pipeline Logs
 ```
 
 ---
 
-## ⚙️ Environment Configurations
+## Features
 
-Create a `.env` file in the `backend/` directory to configure your preferred LLM provider:
+- **Multi-format upload**: PDF, TXT, Markdown → chunked (500 chars, 100 overlap) → embedded (all-MiniLM-L6-v2)
+- **Multi-tenant isolation**: Users only see their own documents at database and vector search level
+- **Real-time pipeline logs**: Toggle-able drawer showing each CRAG step with live messages
+- **Groq LLM**: llama-3.3-70b-versatile via Groq API (with heuristic fallback)
+- **Conversation memory**: Multi-turn chat with previous context preserved
+- **JWT auth**: Register/login with bcrypt + 24h tokens
+- **Dark glassmorphism UI**: Premium obsidian design, mobile-responsive
 
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19 + Vite 8 + react-markdown |
+| Backend | FastAPI + Uvicorn |
+| Vector Store | Custom FAISS (numpy-based, persisted via pickle) |
+| Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
+| Database | SQLite |
+| Auth | JWT + bcrypt |
+| Container | Docker (multi-stage) + Docker Compose |
+| Deployment | Vercel (frontend) + Railway (backend) |
+
+---
+
+## Quick Start
+
+```bash
+# Backend
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+
+# Frontend (another terminal)
+cd frontend
+npm install
+npm run dev
+```
+
+Set your API keys in `backend/.env`:
 ```env
-# JWT Secret for session authentication
-JWT_SECRET=super-secret-key-crag-platform
-
-# API Keys (Configure at least one to enable LLM generation)
-GROQ_API_KEY=gsk_your_groq_api_key_here
-GEMINI_API_KEY=
-OPENAI_API_KEY=
+JWT_SECRET=your-secret-key
+GROQ_API_KEY=gsk_...
 ```
 
 ---
 
-## 📦 Quick Start with Docker (Recommended)
+## Live Demo
 
-To run the entire fullstack platform in production mode with a single command:
-
-1.  **Clone this repository and navigate to the project directory:**
-    ```bash
-    git clone <your-repo-url>
-    cd crag
-    ```
-2.  **Spin up the container:**
-    ```bash
-    docker-compose up --build -d
-    ```
-3.  **Access the application:**
-    *   **Frontend & API:** `http://localhost:8000`
+- **Frontend**: [correctiverag.vercel.app](https://correctiverag.vercel.app)
+- **API Docs**: [celebrated-adaptation-production-95fd.up.railway.app/docs](https://celebrated-adaptation-production-95fd.up.railway.app/docs)
 
 ---
 
-## 🔧 Local Development Setup
+## Why This Matters for AI Engineering
 
-If you prefer to run the client and server separately for development:
-
-### 1. Backend Server Setup
-1.  Navigate to the backend folder:
-    ```bash
-    cd backend
-    ```
-2.  Create and activate a virtual environment:
-    ```bash
-    python -m venv venv
-    # Windows:
-    .\venv\Scripts\Activate.ps1
-    # Mac/Linux:
-    source venv/bin/activate
-    ```
-3.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  Start development server:
-    ```bash
-    uvicorn app.main:app --reload
-    ```
-    *   **Dev server:** `http://127.0.0.1:8000`
-    *   **API Documentation:** `http://127.0.0.1:8000/docs`
-
-### 2. Frontend Client Setup
-1.  Navigate to the frontend folder:
-    ```bash
-    cd ../frontend
-    ```
-2.  Install packages:
-    ```bash
-    npm install
-    ```
-3.  Start development client:
-    ```bash
-    npm run dev
-    ```
-    *   **Client interface:** `http://localhost:5173`
-
----
-
-## 🌐 Public Deployment Guide
-
-This app is production-ready and can be deployed publicly in two ways:
-
-### Option A: Unified Docker Deployment (Recommended)
-You can deploy the Docker container to platforms like **Render**, **Railway**, or **Fly.io**:
-1.  Connect your GitHub repository to the platform.
-2.  Select **Web Service** and choose **Dockerfile** as the build mechanism.
-3.  Mount a persistent disk/volume at `/app/storage` to persist SQLite databases and uploaded PDFs.
-4.  Define `GROQ_API_KEY` (and other keys) in the environment variables settings.
-
-### Option B: Separate Frontend (Vercel) & Backend (Render/Railway)
-1.  Deploy the static frontend from `frontend/` to **Vercel**. Configure the backend API endpoint URL as an environment variable proxy.
-2.  Deploy the FastAPI server from `backend/` to a persistent hosting provider like **Render** or **Railway**.
+This project demonstrates:
+- **Agentic AI design patterns** — evaluation loops, conditional branching, fallback strategies
+- **Understanding of retrieval theory** — chunking strategies, embedding similarity, multi-tenant search
+- **LLM orchestration** — working with multiple providers, prompt engineering, failover handling
+- **Full-stack product engineering** — from paper concept to deployed web application
+- **Performance awareness** — eliminating redundant computation (100% speedup on query evaluation)

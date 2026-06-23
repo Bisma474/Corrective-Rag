@@ -10,8 +10,8 @@ RUN cd frontend && npm install
 
 COPY frontend/ ./frontend/
 
-# Build outputs to backend/static (per vite.config.js outDir setting)
-RUN mkdir -p ./backend/static && cd frontend && npm run build
+# Build outputs to frontend/dist (per vite.config.js outDir setting)
+RUN cd frontend && npm run build
 
 
 # ─────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 
 # Copy built frontend from Stage 1
-COPY --from=frontend-builder /workspace/backend/static ./static
+COPY --from=frontend-builder /workspace/frontend/dist ./static
 
 # Create storage directory for uploaded documents and vector DB
 RUN mkdir -p ./storage

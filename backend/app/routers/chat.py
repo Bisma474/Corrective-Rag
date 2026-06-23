@@ -73,15 +73,23 @@ def submit_query(data: QuerySchema, user_id: int = Depends(get_current_user_id))
         conn.close()
         raise HTTPException(status_code=404, detail="Conversation not found")
         
+    # Load previous messages for multi-turn memory (last 5 exchanges = 10 messages)
+    cursor.execute(
+        "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 10",
+        (data.conversation_id,)
+    )
+    prev_rows = cursor.fetchall()
+    history = [{"role": r["role"], "content": r["content"]} for r in reversed(prev_rows)]
+
     # Save User message
     cursor.execute(
         "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
         (data.conversation_id, "user", data.query)
     )
     conn.commit()
-    
+
     # Execute CRAG Pipeline
-    pipeline_result = run_crag_pipeline(data.query, user_id, conn)
+    pipeline_result = run_crag_pipeline(data.query, user_id, conn, history)
     
     # Save Assistant message
     cursor.execute(

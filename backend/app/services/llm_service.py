@@ -15,11 +15,7 @@ Format your response using clean, well-spaced markdown:
 If the context chunks do not contain enough information to answer the query, explain that you couldn't find the answer in the uploaded files, but answer using your own knowledge if possible, and make it clear that the information is from your own general knowledge.
 """
 
-def generate_answer_via_llm(query: str, contexts: list) -> dict:
-    """
-    Synthesize an answer using Groq, Gemini, or OpenAI based on available keys.
-    Returns a dict with 'answer', 'provider', and 'model'.
-    """
+def generate_answer_via_llm(query: str, contexts: list, history: list = None) -> dict:
     if not contexts:
         return {
             "answer": "I could not find any relevant documents or search results to answer your query.",
@@ -27,7 +23,6 @@ def generate_answer_via_llm(query: str, contexts: list) -> dict:
             "model": "none"
         }
 
-    # Format the context and sources for the prompt
     context_str = ""
     seen_sources = set()
     source_mapping = []
@@ -35,20 +30,15 @@ def generate_answer_via_llm(query: str, contexts: list) -> dict:
     ref_idx = 1
     for ctx in contexts:
         src = ctx.get("source") or "Local Document"
-        # Track unique sources for citations
         if src not in seen_sources:
             seen_sources.add(src)
             source_mapping.append((ref_idx, src))
             ref_idx += 1
-        
-        # Find current ref index
         curr_ref = [idx for idx, name in source_mapping if name == src][0]
         context_str += f"[{curr_ref}] {ctx.get('chunk') or ctx.get('snippet')}\n\n"
 
-    # User prompt
     user_content = f"Context chunks:\n{context_str}\nQuery: {query}\n\nAnswer:"
 
-    # 1. Try Groq
     if settings.GROQ_API_KEY:
         try:
             url = "https://api.groq.com/openai/v1/chat/completions"
@@ -56,16 +46,18 @@ def generate_answer_via_llm(query: str, contexts: list) -> dict:
                 "Authorization": f"Bearer {settings.GROQ_API_KEY}",
                 "Content-Type": "application/json"
             }
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+            if history:
+                for h in history:
+                    messages.append({"role": h["role"], "content": h["content"]})
+            messages.append({"role": "user", "content": user_content})
             payload = {
                 "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content}
-                ],
+                "messages": messages,
                 "temperature": 0.2,
                 "max_tokens": 1024
             }
-            res = requests.post(url, headers=headers, json=payload, timeout=8)
+            res = requests.post(url, headers=headers, json=payload, timeout=10)
             if res.status_code == 200:
                 answer = res.json()["choices"][0]["message"]["content"]
                 answer = append_citations(answer, source_mapping)
@@ -75,59 +67,6 @@ def generate_answer_via_llm(query: str, contexts: list) -> dict:
         except Exception as e:
             print(f"Groq API connection failed: {e}")
 
-    # 2. Try Gemini
-    if settings.GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{
-                    "role": "user",
-                    "parts": [{"text": f"{SYSTEM_PROMPT}\n\n{user_content}"}]
-                }],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 1024
-                }
-            }
-            res = requests.post(url, headers=headers, json=payload, timeout=8)
-            if res.status_code == 200:
-                answer = res.json()["candidates"][0]["content"]["parts"][0]["text"]
-                answer = append_citations(answer, source_mapping)
-                return {"answer": answer, "provider": "Gemini", "model": "gemini-1.5-flash"}
-            else:
-                print(f"Gemini API error (status {res.status_code}): {res.text}")
-        except Exception as e:
-            print(f"Gemini API connection failed: {e}")
-
-    # 3. Try OpenAI
-    if settings.OPENAI_API_KEY:
-        try:
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content}
-                ],
-                "temperature": 0.2,
-                "max_tokens": 1024
-            }
-            res = requests.post(url, headers=headers, json=payload, timeout=8)
-            if res.status_code == 200:
-                answer = res.json()["choices"][0]["message"]["content"]
-                answer = append_citations(answer, source_mapping)
-                return {"answer": answer, "provider": "OpenAI", "model": "gpt-4o-mini"}
-            else:
-                print(f"OpenAI API error (status {res.status_code}): {res.text}")
-        except Exception as e:
-            print(f"OpenAI API connection failed: {e}")
-
-    # 4. Fallback to highly polished rule-based generation
     answer = generate_fallback_polished(query, contexts, source_mapping)
     return {"answer": answer, "provider": "Heuristics Engine (Fallback)", "model": "Rule-based Extractor"}
 

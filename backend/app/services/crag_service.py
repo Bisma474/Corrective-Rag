@@ -3,9 +3,8 @@ import json
 import urllib.parse
 import urllib.request
 import re
-from app.services.document_service import vector_db, get_embedding_model, extract_text_from_file
+from app.services.document_service import vector_db, extract_text_from_file
 from app.services.llm_service import generate_answer_via_llm
-import numpy as np
 
 # A lightweight free search client utilizing DuckDuckGo HTML search
 def web_search(query: str, max_results: int = 4):
@@ -47,18 +46,6 @@ def web_search(query: str, max_results: int = 4):
         print(f"Web search error: {e}")
         return []
 
-def evaluate_relevance(query: str, chunk: str) -> float:
-    # Use embedding cosine similarity between query and chunk as a basic evaluator
-    model = get_embedding_model()
-    q_emb = model.encode([query])[0]
-    c_emb = model.encode([chunk])[0]
-    
-    q_norm = np.linalg.norm(q_emb)
-    c_norm = np.linalg.norm(c_emb)
-    if q_norm == 0 or c_norm == 0:
-        return 0.0
-    return float(np.dot(q_emb, c_emb) / (q_norm * c_norm))
-
 def query_rewriter(query: str) -> str:
     # Basic rule-based cleaner to remove conversational filler words for search optimization
     clean = re.sub(r'\b(please|tell|me|about|what|is|find|search|for|how|do|i)\b', '', query, flags=re.IGNORECASE)
@@ -76,7 +63,7 @@ def _shorten_source(source: str) -> str:
 # generate_answer_local has been removed; generation is now handled by llm_service.py
 
 
-def run_crag_pipeline(query: str, user_id: int, conn):
+def run_crag_pipeline(query: str, user_id: int, conn, history: list = None):
     logs = []
     logs.append({"step": "RETRIEVAL", "message": "Initiating local database vector search."})
     
@@ -92,7 +79,7 @@ def run_crag_pipeline(query: str, user_id: int, conn):
     best_score = 0.0
     
     for c in candidates:
-        score = evaluate_relevance(query, c["chunk"])
+        score = c["score"]
         filename = doc_mapping.get(c["doc_id"], "Local File")
         graded_candidates.append({
             "chunk": c["chunk"],
@@ -145,7 +132,7 @@ def run_crag_pipeline(query: str, user_id: int, conn):
                 final_contexts.append(c)
 
     # 4. Generate Answer
-    llm_result = generate_answer_via_llm(query, final_contexts)
+    llm_result = generate_answer_via_llm(query, final_contexts, history)
     answer = llm_result["answer"]
     provider = llm_result["provider"]
     model = llm_result["model"]
