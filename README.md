@@ -149,11 +149,4 @@ GROQ_API_KEY=gsk_...
 
 ---
 
-## Why This Matters for AI Engineering
 
-This project demonstrates:
-- **Agentic AI design patterns** — evaluation loops, conditional branching, fallback strategies
-- **Understanding of retrieval theory** — chunking strategies, embedding similarity, multi-tenant search
-- **LLM orchestration** — working with multiple providers, prompt engineering, failover handling
-- **Full-stack product engineering** — from paper concept to deployed web application
-- **Performance awareness** — eliminating redundant computation (100% speedup on query evaluation)
