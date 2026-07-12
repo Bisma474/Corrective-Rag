@@ -6,19 +6,43 @@ from app.services.document_service import vector_db, extract_text_from_file
 from app.services.llm_service import generate_answer_via_llm
 
 def web_search(query: str, max_results: int = 4):
-    try:
-        from duckduckgo_search import DDGS
-        with DDGS(timeout=10) as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-        if results:
-            return [{"snippet": r["body"], "url": r["href"]} for r in results]
-    except Exception as e:
-        print(f"DDG library failed: {e}")
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "DNT": "1",
+    })
 
     try:
-        url = "https://api.duckduckgo.com/"
-        params = {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
-        res = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        session.get("https://duckduckgo.com/", timeout=10)
+        res = session.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": query},
+            timeout=15,
+            allow_redirects=True,
+        )
+        html = res.text
+        results = []
+        blocks = re.split(r'<div class="result__body">', html)[1:]
+        for block in blocks[:max_results]:
+            url_match = re.search(r'<a[^>]+href="([^"]+)"[^>]*class="result__a"', block)
+            snippet_match = re.search(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL)
+            if snippet_match:
+                snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)).strip()
+                url = url_match.group(1) if url_match else ""
+                results.append({"snippet": snippet[:500], "url": url})
+        if results:
+            return results
+    except Exception as e:
+        print(f"DDG HTML search failed: {e}")
+
+    try:
+        res = session.get(
+            "https://api.duckduckgo.com/",
+            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
+            timeout=10,
+        )
         data = res.json()
         results = []
         abstract = data.get("AbstractText", "")
@@ -37,8 +61,8 @@ def web_search(query: str, max_results: int = 4):
     return []
 
 def query_rewriter(query: str) -> str:
-    # Basic rule-based cleaner to remove conversational filler words for search optimization
-    clean = re.sub(r'\b(please|tell|me|about|what|is|find|search|for|how|do|i)\b', '', query, flags=re.IGNORECASE)
+    clean = re.sub(r'\b(please|tell|me|about|what|is|find|search|for|how|do|i|can|you)\b', '', query, flags=re.IGNORECASE)
+    clean = re.sub(r'[?]+', '', clean)
     clean = re.sub(r'\s+', ' ', clean).strip()
     return clean if clean else query
 
