@@ -8,8 +8,4 @@ python-multipart==0.0.9
 requests==2.32.3
 numpy==1.26.4
 sentence-transformers==3.0.1
-faiss-cpu==1.8.0.post1
 PyPDF2==3.0.1
-slowapi==0.1.9
-jinja2==3.1.4
-duckduckgo_search==7.5.1
