@@ -36,8 +36,8 @@ COPY backend/ ./
 # Copy built frontend from Stage 1
 COPY --from=frontend-builder /workspace/frontend/dist ./static
 
-# Create storage directory for uploaded documents and vector DB
-RUN mkdir -p ./storage
+# Create persistent directories for DB, uploads, and vector store
+RUN mkdir -p /data/storage /data/db
 
 # Expose port
 EXPOSE 8000
