@@ -6,57 +6,46 @@ from app.services.document_service import vector_db, extract_text_from_file
 from app.services.llm_service import generate_answer_via_llm
 
 def web_search(query: str, max_results: int = 4):
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "DNT": "1",
-    })
+    try:
+        from duckduckgo_search import DDGS
+        for backend in ["api", "html", "lite"]:
+            try:
+                with DDGS(backend=backend, timeout=10) as ddgs:
+                    results = list(ddgs.text(query, max_results=max_results))
+                if results:
+                    return [{"snippet": r["body"], "url": r["href"]} for r in results]
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"DDG library not available: {e}")
 
     try:
-        session.get("https://duckduckgo.com/", timeout=10)
-        res = session.post(
-            "https://html.duckduckgo.com/html/",
-            data={"q": query},
-            timeout=15,
-            allow_redirects=True,
+        res = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "format": "json",
+                "srlimit": max_results,
+                "srprop": "snippet|titlesnippet",
+            },
+            timeout=10,
+            headers={"User-Agent": "CRAG-App/1.0"},
         )
-        html = res.text
+        data = res.json()
         results = []
-        blocks = re.split(r'<div class="result__body">', html)[1:]
-        for block in blocks[:max_results]:
-            url_match = re.search(r'<a[^>]+href="([^"]+)"[^>]*class="result__a"', block)
-            snippet_match = re.search(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL)
-            if snippet_match:
-                snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)).strip()
-                url = url_match.group(1) if url_match else ""
+        for item in data.get("query", {}).get("search", []):
+            snippet = re.sub(r'<[^>]+>', "", item.get("snippet", ""))
+            title = item.get("title", "")
+            page_id = item.get("pageid", "")
+            url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
+            if snippet:
                 results.append({"snippet": snippet[:500], "url": url})
         if results:
             return results
     except Exception as e:
-        print(f"DDG HTML search failed: {e}")
-
-    try:
-        res = session.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-            timeout=10,
-        )
-        data = res.json()
-        results = []
-        abstract = data.get("AbstractText", "")
-        if abstract:
-            results.append({"snippet": abstract[:500], "url": data.get("AbstractURL", "") or "https://duckduckgo.com"})
-        for topic in data.get("RelatedTopics", []):
-            if "Text" in topic:
-                results.append({"snippet": topic["Text"][:500], "url": topic.get("FirstURL", "") or "https://duckduckgo.com"})
-            if len(results) >= max_results:
-                break
-        if results:
-            return results
-    except Exception as e:
-        print(f"DDG API fallback failed: {e}")
+        print(f"Wikipedia search failed: {e}")
 
     return []
 
@@ -131,7 +120,7 @@ def run_crag_pipeline(query: str, user_id: int, conn, history: list = None):
         
         # Web search fallback
         web_results = web_search(rewritten_query, max_results=4)
-        logs.append({"step": "WEB_SEARCH", "message": f"DuckDuckGo search returned {len(web_results)} web results."})
+        logs.append({"step": "WEB_SEARCH", "message": f"Web search returned {len(web_results)} results."})
         
         final_contexts = []
         for w in web_results:
