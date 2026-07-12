@@ -1,47 +1,15 @@
 import os
 import json
-import urllib.parse
-import urllib.request
 import re
+from duckduckgo_search import DDGS
 from app.services.document_service import vector_db, extract_text_from_file
 from app.services.llm_service import generate_answer_via_llm
 
-# A lightweight free search client utilizing DuckDuckGo HTML search
 def web_search(query: str, max_results: int = 4):
     try:
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-        req = urllib.request.Request(
-            url, 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            html = response.read().decode('utf-8', errors='ignore')
-            
-        # Parse links and snippets
-        links = re.findall(r'class="result__snippet"[^>]*href="([^"]+)"', html)
-        snippets = re.findall(r'<a class="result__snippet"[^>]*>(.*?)</a>', html)
-        
-        results = []
-        for i in range(min(len(snippets), max_results)):
-            snippet_clean = re.sub(r'<[^>]+>', '', snippets[i]).strip()
-            snippet_clean = urllib.parse.unquote(snippet_clean)
-            
-            raw_link = links[i] if i < len(links) else ""
-            clean_link = raw_link
-            
-            # Clean up DuckDuckGo redirect link wrapping
-            if "uddg=" in raw_link:
-                match = re.search(r'uddg=([^&]+)', raw_link)
-                if match:
-                    clean_link = urllib.parse.unquote(match.group(1))
-            elif raw_link.startswith("//"):
-                clean_link = "https:" + raw_link
-                
-            results.append({
-                "snippet": snippet_clean,
-                "url": clean_link
-            })
-        return results
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        return [{"snippet": r["body"], "url": r["href"]} for r in results]
     except Exception as e:
         print(f"Web search error: {e}")
         return []
