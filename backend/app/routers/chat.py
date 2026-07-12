@@ -64,42 +64,52 @@ def get_messages(conv_id: int, user_id: int = Depends(get_current_user_id)):
 
 @router.post("/query")
 def submit_query(data: QuerySchema, user_id: int = Depends(get_current_user_id)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Authenticate ownership
-    cursor.execute("SELECT id FROM conversations WHERE id = ? AND user_id = ?", (data.conversation_id, user_id))
-    if not cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    import traceback
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-    # Load previous messages for multi-turn memory (last 5 exchanges = 10 messages)
-    cursor.execute(
-        "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 10",
-        (data.conversation_id,)
-    )
-    prev_rows = cursor.fetchall()
-    history = [{"role": r["role"], "content": r["content"]} for r in reversed(prev_rows)]
+        # Authenticate ownership
+        cursor.execute("SELECT id FROM conversations WHERE id = ? AND user_id = ?", (data.conversation_id, user_id))
+        if not cursor.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversation not found")
+            
+        # Load previous messages for multi-turn memory (last 5 exchanges = 10 messages)
+        cursor.execute(
+            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 10",
+            (data.conversation_id,)
+        )
+        prev_rows = cursor.fetchall()
+        history = [{"role": r["role"], "content": r["content"]} for r in reversed(prev_rows)]
 
-    # Save User message
-    cursor.execute(
-        "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
-        (data.conversation_id, "user", data.query)
-    )
-    conn.commit()
+        # Save User message
+        cursor.execute(
+            "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
+            (data.conversation_id, "user", data.query)
+        )
+        conn.commit()
 
-    # Execute CRAG Pipeline
-    pipeline_result = run_crag_pipeline(data.query, user_id, conn, history)
-    
-    # Save Assistant message
-    cursor.execute(
-        "INSERT INTO messages (conversation_id, role, content, logs) VALUES (?, ?, ?, ?)",
-        (data.conversation_id, "assistant", pipeline_result["answer"], json.dumps(pipeline_result["logs"]))
-    )
-    conn.commit()
-    conn.close()
-    
-    return {
-        "answer": pipeline_result["answer"],
-        "logs": pipeline_result["logs"]
-    }
+        # Execute CRAG Pipeline
+        pipeline_result = run_crag_pipeline(data.query, user_id, conn, history)
+        
+        # Save Assistant message
+        cursor.execute(
+            "INSERT INTO messages (conversation_id, role, content, logs) VALUES (?, ?, ?, ?)",
+            (data.conversation_id, "assistant", pipeline_result["answer"], json.dumps(pipeline_result["logs"]))
+        )
+        conn.commit()
+        conn.close()
+        
+        return {
+            "answer": pipeline_result["answer"],
+            "logs": pipeline_result["logs"]
+        }
+    except HTTPException:
+        conn.close() if 'conn' in dir() else None
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"CRASH in /query: {tb}")
+        conn.close() if 'conn' in dir() else None
+        raise HTTPException(status_code=500, detail=f"Server error: {e}")
