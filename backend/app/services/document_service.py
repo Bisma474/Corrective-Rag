@@ -5,76 +5,104 @@ import PyPDF2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from app.core.config import settings
 
-_vectorizer = None
-
-def get_vectorizer():
-    global _vectorizer
-    if _vectorizer is None:
-        _vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
-    return _vectorizer
-
 class LocalVectorDB:
     def __init__(self):
         self.db_path = os.path.join(settings.STORAGE_DIR, "vector_db.pkl")
+        self.vectorizer = None
         self.load()
 
     def load(self):
         if os.path.exists(self.db_path):
             with open(self.db_path, "rb") as f:
                 data = pickle.load(f)
-                self.vectors = data.get("vectors", [])
                 self.chunks = data.get("chunks", [])
                 self.doc_ids = data.get("doc_ids", [])
+                self.vectors = data.get("vectors", [])
+                vec_data = data.get("vectorizer")
+                if vec_data:
+                    self.vectorizer = TfidfVectorizer()
+                    self.vectorizer.vocabulary_ = vec_data["vocabulary"]
+                    self.vectorizer.idf_ = np.array(vec_data["idf_"])
+                    self.vectorizer.stop_words_ = vec_data.get("stop_words_", "english")
+                else:
+                    self.vectorizer = None
         else:
-            self.vectors = []
             self.chunks = []
             self.doc_ids = []
+            self.vectors = []
+            self.vectorizer = None
 
     def save(self):
+        vec_data = None
+        if self.vectorizer and hasattr(self.vectorizer, "vocabulary_"):
+            vec_data = {
+                "vocabulary": self.vectorizer.vocabulary_,
+                "idf_": self.vectorizer.idf_.tolist(),
+                "stop_words_": self.vectorizer.stop_words_,
+            }
         with open(self.db_path, "wb") as f:
             pickle.dump({
-                "vectors": self.vectors,
                 "chunks": self.chunks,
-                "doc_ids": self.doc_ids
+                "doc_ids": self.doc_ids,
+                "vectors": self.vectors,
+                "vectorizer": vec_data,
             }, f)
+
+    def _ensure_vectorizer(self, texts):
+        if self.vectorizer is None:
+            self.vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+            self.vectors = self.vectorizer.fit_transform(texts).toarray()
+        elif not hasattr(self.vectorizer, "vocabulary_"):
+            self.vectorizer.fit(texts)
+            if self.vectors:
+                vecs = []
+                for chunk in self.chunks:
+                    vecs.append(self.vectorizer.transform([chunk]).toarray()[0])
+                self.vectors = vecs
 
     def add_document(self, doc_id: int, text: str):
         chunk_size = 500
         overlap = 100
 
-        chunks = []
+        new_chunks = []
         start = 0
         while start < len(text):
             end = min(start + chunk_size, len(text))
             chunk = text[start:end].strip()
             if chunk:
-                chunks.append(chunk)
+                new_chunks.append(chunk)
             start += chunk_size - overlap
             if start >= len(text) or end == len(text):
                 break
 
-        if not chunks:
+        if not new_chunks:
             return
 
-        vec = get_vectorizer()
-        chunk_vectors = vec.fit_transform(chunks).toarray()
+        all_texts = self.chunks + new_chunks
+        self.vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+        all_vectors = self.vectorizer.fit_transform(all_texts).toarray()
 
-        for chunk_vec, chunk_text in zip(chunk_vectors, chunks):
-            self.vectors.append(chunk_vec)
-            self.chunks.append(chunk_text)
-            self.doc_ids.append(doc_id)
-
+        self.chunks = all_texts
+        self.doc_ids = self.doc_ids + [doc_id] * len(new_chunks)
+        self.vectors = all_vectors
         self.save()
 
     def delete_document(self, doc_id: int):
-        indices_to_keep = [i for i, d_id in enumerate(self.doc_ids) if d_id != doc_id]
-        self.vectors = [self.vectors[i] for i in indices_to_keep]
-        self.chunks = [self.chunks[i] for i in indices_to_keep]
-        self.doc_ids = [self.doc_ids[i] for i in indices_to_keep]
+        keep = [i for i, d_id in enumerate(self.doc_ids) if d_id != doc_id]
+        self.chunks = [self.chunks[i] for i in keep]
+        self.doc_ids = [self.doc_ids[i] for i in keep]
+        if self.vectors:
+            self.vectors = [self.vectors[i] for i in keep]
+        if self.chunks:
+            self.vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+            self.vectors = self.vectorizer.fit_transform(self.chunks).toarray()
+        else:
+            self.vectors = []
+            self.vectorizer = None
         self.save()
 
     def search(self, query: str, top_k: int = 3, doc_ids: list = None):
-        if not self.vectors or not self.chunks:
+        if not self.vectors or not self.chunks or self.vectorizer is None:
             return []
 
         if doc_ids is not None:
@@ -86,17 +114,15 @@ class LocalVectorDB:
         else:
             indices = list(range(len(self.vectors)))
 
-        vec = get_vectorizer()
-        query_vec = vec.fit_transform([query]).toarray()[0]
+        query_vec = self.vectorizer.transform([query]).toarray()[0]
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return []
 
         filtered_vecs = np.array([self.vectors[i] for i in indices])
         norms = np.linalg.norm(filtered_vecs, axis=1)
-        query_norm = np.linalg.norm(query_vec)
 
-        if query_norm == 0 or (norms == 0).any():
-            return []
-
-        similarities = np.dot(filtered_vecs, query_vec) / (norms * query_norm)
+        similarities = np.dot(filtered_vecs, query_vec) / (norms * query_norm + 1e-10)
         top_indices = np.argsort(similarities)[::-1][:top_k]
 
         results = []
