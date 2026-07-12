@@ -7,9 +7,11 @@ from app.services.llm_service import generate_answer_via_llm
 
 def web_search(query: str, max_results: int = 4):
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=15) as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
-        return [{"snippet": r["body"], "url": r["href"]} for r in results]
+        if results:
+            return [{"snippet": r["body"], "url": r["href"]} for r in results]
+        return []
     except Exception as e:
         print(f"Web search error: {e}")
         return []
@@ -104,10 +106,16 @@ def run_crag_pipeline(query: str, user_id: int, conn, history: list = None):
     answer = llm_result["answer"]
     provider = llm_result["provider"]
     model = llm_result["model"]
-    logs.append({
-        "step": "GENERATION",
-        "message": f"Synthesized final response using {provider} ({model})."
-    })
+    if not final_contexts:
+        logs.append({
+            "step": "GENERATION",
+            "message": "No context found from documents or web. Using Groq's general knowledge to answer."
+        })
+    else:
+        logs.append({
+            "step": "GENERATION",
+            "message": f"Synthesized final response using {provider} ({model})."
+        })
     
     return {
         "answer": answer,

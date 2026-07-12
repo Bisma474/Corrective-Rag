@@ -16,13 +16,6 @@ If the context chunks do not contain enough information to answer the query, exp
 """
 
 def generate_answer_via_llm(query: str, contexts: list, history: list = None) -> dict:
-    if not contexts:
-        return {
-            "answer": "I could not find any relevant documents or search results to answer your query.",
-            "provider": "none",
-            "model": "none"
-        }
-
     context_str = ""
     seen_sources = set()
     source_mapping = []
@@ -37,7 +30,10 @@ def generate_answer_via_llm(query: str, contexts: list, history: list = None) ->
         curr_ref = [idx for idx, name in source_mapping if name == src][0]
         context_str += f"[{curr_ref}] {ctx.get('chunk') or ctx.get('snippet')}\n\n"
 
-    user_content = f"Context chunks:\n{context_str}\nQuery: {query}\n\nAnswer:"
+    if context_str:
+        user_content = f"Context chunks:\n{context_str}\nQuery: {query}\n\nAnswer:"
+    else:
+        user_content = f"Query: {query}\n\nPlease answer this question using your own general knowledge. If you don't know the answer, say so clearly."
 
     if settings.GROQ_API_KEY:
         try:
@@ -54,10 +50,10 @@ def generate_answer_via_llm(query: str, contexts: list, history: list = None) ->
             payload = {
                 "model": "llama-3.3-70b-versatile",
                 "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": 1024
+                "temperature": 0.3,
+                "max_tokens": 2048
             }
-            res = requests.post(url, headers=headers, json=payload, timeout=10)
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
             if res.status_code == 200:
                 answer = res.json()["choices"][0]["message"]["content"]
                 answer = append_citations(answer, source_mapping)
