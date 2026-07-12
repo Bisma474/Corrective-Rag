@@ -4,7 +4,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.database import init_db
-from app.services.document_service import get_embedding_model
 from app.routers import auth, documents, chat
 import os
 
@@ -32,11 +31,6 @@ app.include_router(chat.router)
 def startup_event():
     init_db()
     print("Database tables initialized successfully.")
-    try:
-        get_embedding_model()
-        print("Embedding model loaded successfully.")
-    except Exception as e:
-        print(f"Embedding model load skipped: {e}")
 
 @app.get("/health")
 def health_check():

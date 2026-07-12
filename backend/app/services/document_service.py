@@ -2,18 +2,16 @@ import os
 import numpy as np
 import pickle
 import PyPDF2
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from app.core.config import settings
 
-# Load model lazily
-_model = None
+_vectorizer = None
 
-def get_embedding_model():
-    global _model
-    if _model is None:
-        # Load a small, fast model
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
-    return _model
+def get_vectorizer():
+    global _vectorizer
+    if _vectorizer is None:
+        _vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+    return _vectorizer
 
 class LocalVectorDB:
     def __init__(self):
@@ -24,29 +22,26 @@ class LocalVectorDB:
         if os.path.exists(self.db_path):
             with open(self.db_path, "rb") as f:
                 data = pickle.load(f)
-                self.embeddings = data.get("embeddings", [])
+                self.vectors = data.get("vectors", [])
                 self.chunks = data.get("chunks", [])
                 self.doc_ids = data.get("doc_ids", [])
         else:
-            self.embeddings = []
+            self.vectors = []
             self.chunks = []
             self.doc_ids = []
 
     def save(self):
         with open(self.db_path, "wb") as f:
             pickle.dump({
-                "embeddings": self.embeddings,
+                "vectors": self.vectors,
                 "chunks": self.chunks,
                 "doc_ids": self.doc_ids
             }, f)
 
     def add_document(self, doc_id: int, text: str):
-        model = get_embedding_model()
-        
-        # Split text into chunks of roughly 500 characters with 100 character overlap
         chunk_size = 500
         overlap = 100
-        
+
         chunks = []
         start = 0
         while start < len(text):
@@ -61,27 +56,25 @@ class LocalVectorDB:
         if not chunks:
             return
 
-        # Compute embeddings
-        chunk_embeddings = model.encode(chunks)
+        vec = get_vectorizer()
+        chunk_vectors = vec.fit_transform(chunks).toarray()
 
-        for chunk, emb in zip(chunks, chunk_embeddings):
-            self.chunks.append(chunk)
-            self.embeddings.append(emb)
+        for chunk_vec, chunk_text in zip(chunk_vectors, chunks):
+            self.vectors.append(chunk_vec)
+            self.chunks.append(chunk_text)
             self.doc_ids.append(doc_id)
 
         self.save()
 
     def delete_document(self, doc_id: int):
         indices_to_keep = [i for i, d_id in enumerate(self.doc_ids) if d_id != doc_id]
-        
-        self.embeddings = [self.embeddings[i] for i in indices_to_keep]
+        self.vectors = [self.vectors[i] for i in indices_to_keep]
         self.chunks = [self.chunks[i] for i in indices_to_keep]
         self.doc_ids = [self.doc_ids[i] for i in indices_to_keep]
-        
         self.save()
 
     def search(self, query: str, top_k: int = 3, doc_ids: list = None):
-        if not self.embeddings:
+        if not self.vectors or not self.chunks:
             return []
 
         if doc_ids is not None:
@@ -91,24 +84,21 @@ class LocalVectorDB:
             if not indices:
                 return []
         else:
-            indices = list(range(len(self.embeddings)))
+            indices = list(range(len(self.vectors)))
 
-        model = get_embedding_model()
-        query_emb = model.encode([query])[0]
+        vec = get_vectorizer()
+        query_vec = vec.fit_transform([query]).toarray()[0]
 
-        # Compute cosine similarity
-        filtered_embs = np.array([self.embeddings[i] for i in indices])
-        norms = np.linalg.norm(filtered_embs, axis=1)
-        query_norm = np.linalg.norm(query_emb)
-        
+        filtered_vecs = np.array([self.vectors[i] for i in indices])
+        norms = np.linalg.norm(filtered_vecs, axis=1)
+        query_norm = np.linalg.norm(query_vec)
+
         if query_norm == 0 or (norms == 0).any():
             return []
 
-        similarities = np.dot(filtered_embs, query_emb) / (norms * query_norm)
-        
-        # Get top_k indices
+        similarities = np.dot(filtered_vecs, query_vec) / (norms * query_norm)
         top_indices = np.argsort(similarities)[::-1][:top_k]
-        
+
         results = []
         for idx in top_indices:
             actual_idx = indices[idx]
