@@ -39,12 +39,8 @@ COPY --from=frontend-builder /workspace/frontend/dist ./static
 # Create persistent directories for DB, uploads, and vector store
 RUN mkdir -p /data/storage /data/db
 
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+# Expose port (HF Spaces expects port 7860)
+EXPOSE 7860
 
 # Start FastAPI server
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
