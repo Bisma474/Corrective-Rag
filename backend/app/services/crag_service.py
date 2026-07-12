@@ -1,20 +1,40 @@
 import os
 import json
 import re
-from duckduckgo_search import DDGS
+import requests
 from app.services.document_service import vector_db, extract_text_from_file
 from app.services.llm_service import generate_answer_via_llm
 
 def web_search(query: str, max_results: int = 4):
     try:
-        with DDGS(timeout=15) as ddgs:
+        from duckduckgo_search import DDGS
+        with DDGS(timeout=10) as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         if results:
             return [{"snippet": r["body"], "url": r["href"]} for r in results]
-        return []
     except Exception as e:
-        print(f"Web search error: {e}")
-        return []
+        print(f"DDG library failed: {e}")
+
+    try:
+        url = "https://api.duckduckgo.com/"
+        params = {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
+        res = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        data = res.json()
+        results = []
+        abstract = data.get("AbstractText", "")
+        if abstract:
+            results.append({"snippet": abstract[:500], "url": data.get("AbstractURL", "") or "https://duckduckgo.com"})
+        for topic in data.get("RelatedTopics", []):
+            if "Text" in topic:
+                results.append({"snippet": topic["Text"][:500], "url": topic.get("FirstURL", "") or "https://duckduckgo.com"})
+            if len(results) >= max_results:
+                break
+        if results:
+            return results
+    except Exception as e:
+        print(f"DDG API fallback failed: {e}")
+
+    return []
 
 def query_rewriter(query: str) -> str:
     # Basic rule-based cleaner to remove conversational filler words for search optimization
