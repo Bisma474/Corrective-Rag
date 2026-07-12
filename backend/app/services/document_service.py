@@ -54,7 +54,7 @@ class LocalVectorDB:
             self.vectors = self.vectorizer.fit_transform(texts).toarray()
         elif not hasattr(self.vectorizer, "vocabulary_"):
             self.vectorizer.fit(texts)
-            if self.vectors:
+            if len(self.vectors) > 0:
                 vecs = []
                 for chunk in self.chunks:
                     vecs.append(self.vectorizer.transform([chunk]).toarray()[0])
@@ -91,9 +91,9 @@ class LocalVectorDB:
         keep = [i for i, d_id in enumerate(self.doc_ids) if d_id != doc_id]
         self.chunks = [self.chunks[i] for i in keep]
         self.doc_ids = [self.doc_ids[i] for i in keep]
-        if self.vectors:
+        if len(self.vectors) > 0:
             self.vectors = [self.vectors[i] for i in keep]
-        if self.chunks:
+        if len(self.chunks) > 0:
             self.vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
             self.vectors = self.vectorizer.fit_transform(self.chunks).toarray()
         else:
@@ -102,7 +102,7 @@ class LocalVectorDB:
         self.save()
 
     def search(self, query: str, top_k: int = 3, doc_ids: list = None):
-        if not self.vectors or not self.chunks or self.vectorizer is None:
+        if self.vectorizer is None or len(self.vectors) == 0 or len(self.chunks) == 0:
             return []
 
         if doc_ids is not None:
